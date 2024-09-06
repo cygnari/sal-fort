@@ -26,11 +26,11 @@ program main
     allocate(sshs(point_count))
 
     IF (process_rank == 0) THEN
-        open (file='2313486_mpas_grid_areas.csv', unit=10) ! read in values from data files
-        open (file='2313486_mpas_grid_x.csv', unit=11)
-        open (file='2313486_mpas_grid_y.csv', unit=12)
-        open (file='2313486_mpas_grid_z.csv', unit=13)
-        open (file='2313486_mpas_grid_ssh.csv', unit=14)
+        open (file='./data-files/2313486_mpas_grid_areas.csv', unit=10) ! read in values from data files
+        open (file='./data-files/2313486_mpas_grid_x.csv', unit=11)
+        open (file='./data-files/2313486_mpas_grid_y.csv', unit=12)
+        open (file='./data-files/2313486_mpas_grid_z.csv', unit=13)
+        open (file='./data-files/2313486_mpas_grid_ssh.csv', unit=14)
 
         DO i = 1, point_count
             read (10, *) areas(i)
