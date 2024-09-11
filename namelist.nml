@@ -1,4 +1,6 @@
 &params
 theta=0.7
 point_count = 2313486
+interp_degree=1
+cluster_thresh=50
 /
