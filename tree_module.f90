@@ -1,5 +1,4 @@
 MODULE Tree_Module
-    use mpi
     use cube_sphere_module
     implicit none
 

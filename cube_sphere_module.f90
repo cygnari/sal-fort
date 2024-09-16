@@ -1,5 +1,4 @@
 MODULE CUBE_SPHERE_MODULE
-    use mpi
     implicit none
 
     CONTAINS
