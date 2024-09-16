@@ -35,7 +35,9 @@ MODULE MPI_Module
         CALL MPI_TYPE_GET_EXTENT(MPI_DOUBLE_PRECISION, lowerbound, sizeofreal, ierr)
         CALL MPI_WIN_Create(A, array_size*sizeofreal, MPI_DOUBLE_PRECISION, MPI_INFO_NULL, comm, win, ierr)
         CALL MPI_WIN_Fence(0, win, ierr)
-        CALL MPI_Accumulate(A, array_size, MPI_DOUBLE_PRECISION, 0, disp, array_size, MPI_DOUBLE_PRECISION, MPI_SUM, win, ierr)
+        IF (p /= 0) THEN
+            CALL MPI_Accumulate(A, array_size, MPI_DOUBLE_PRECISION, 0, disp, array_size, MPI_DOUBLE_PRECISION, MPI_SUM, win, ierr)
+        END IF
         CALL MPI_WIN_Fence(0, win, ierr)
         IF (p /= 0) THEN
             CALL MPI_Get(A, array_size, MPI_DOUBLE_PRECISION, 0, disp, array_size, MPI_DOUBLE_PRECISION, win, ierr)

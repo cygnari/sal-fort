@@ -1,6 +1,7 @@
 MODULE FAST_SUM_MODULE
     use tree_module
     use bli_module
+    use cube_sphere_module
     implicit none
 
     CONTAINS
@@ -77,6 +78,57 @@ MODULE FAST_SUM_MODULE
         type(cube_panel), intent(in) :: target_panel, source_panel
         integer, intent(in) :: interp_degree
         real(8), intent(inout) :: sal_longrad(:), sal_latgrad(:)
+        real(8), allocatable :: cheb_xi(:), cheb_eta(:), basis_vals(:,:), proxy_weights(:,:)
+        integer :: target_count, target_i, i, j, source_count, source_j, k
+        real(8) :: sx, sy, sz, xi, eta, min_xi, max_xi, min_eta, max_eta, tx, ty, tz, cx, cy, cz, sal_x, sal_y
+
+        target_count = target_panel%panel_point_count
+        source_count = source_panel%panel_point_count
+
+        min_xi = source_panel%min_xi
+        max_xi = source_panel%max_xi
+        min_eta = source_panel%min_eta
+        max_eta = source_panel%max_eta
+
+        ! barycentric lagrange interpolation points
+        call bli_interp_points_shift(cheb_xi, min_xi, max_xi, interp_degree)
+        call bli_interp_points_shift(cheb_eta, min_eta, max_eta, interp_degree)
+
+        allocate(proxy_weights(interp_degree+1, interp_degree+1), source=0.0_8)
+
+        ! compute proxy weights
+        DO i = 1, source_count
+            source_j = source_panel%points_inside(i)
+            sx = xs(source_j)
+            sy = ys(source_j)
+            sz = zs(source_j)
+            call xieta_from_xyz(sx, sy, sz, xi, eta, source_panel%face)
+            call interp_vals_bli(basis_vals, xi, eta, min_xi, max_xi, min_eta, max_eta, interp_degree)
+            DO k = 1, interp_degree+1 ! loop over eta
+                DO j = 1, interp_degree+1 ! loop over xi
+                    proxy_weights(j,k) = proxy_weights(j,k) + basis_vals(j, k)*area(source_j)*ssh(source_j)
+                END DO
+            END DO
+        END DO
+
+        ! interact proxy source points and target points
+        DO i = 1, target_count
+            target_i = target_panel%points_inside(i)
+            tx = xs(target_i)
+            ty = ys(target_i)
+            tz = zs(target_i)
+            DO k = 1, interp_degree+1
+                eta = cheb_eta(k)
+                DO j = 1, interp_degree+1
+                    xi = cheb_xi(j)
+                    call xyz_from_xieta(cx, cy, cz, xi, eta, source_panel%face)
+                    call sal_grad_gfunc(tx, ty, tz, cx, cy, cz, sal_x, sal_y)
+                    sal_longrad(target_i) = sal_longrad(target_i) + sal_x*proxy_weights(j,k)
+                    sal_latgrad(target_i) = sal_latgrad(target_i) + sal_y*proxy_weights(j,k)
+                END DO
+            END DO
+        END DO
+
     END SUBROUTINE
 
     SUBROUTINE cp_interact(sal_longrad, sal_latgrad, target_panel, source_panel, xs, ys, zs, area, ssh, interp_degree)
@@ -84,6 +136,69 @@ MODULE FAST_SUM_MODULE
         type(cube_panel), intent(in) :: target_panel, source_panel
         integer, intent(in) :: interp_degree
         real(8), intent(inout) :: sal_longrad(:), sal_latgrad(:)
+        real(8), allocatable :: cheb_xi(:), cheb_eta(:), sxs(:), sys(:), szs(:), areas(:), sshs(:), &
+                                proxy_pots_x(:,:), proxy_pots_y(:,:), basis_vals(:,:)
+        real(8) :: sx, sy, sz, tx, ty, tz, min_xi, max_xi, min_eta, max_eta, eta, cx, cy, cz, sal_x, sal_y, xi
+        integer :: i, j, target_count, source_count, target_i, source_j, k
+
+        target_count = target_panel%panel_point_count
+        source_count = source_panel%panel_point_count
+
+        min_xi = target_panel%min_xi
+        max_xi = target_panel%max_xi
+        min_eta = target_panel%min_eta
+        max_eta = target_panel%max_eta
+
+        call bli_interp_points_shift(cheb_xi, min_xi, max_xi, interp_degree)
+        call bli_interp_points_shift(cheb_eta, min_eta, max_eta, interp_degree)
+
+        allocate(proxy_pots_x(interp_degree+1, interp_degree+1), source=0.0_8)
+        allocate(proxy_pots_y(interp_degree+1, interp_degree+1), source=0.0_8)
+
+        allocate(sxs(source_count))
+        allocate(sys(source_count))
+        allocate(szs(source_count))
+        allocate(areas(source_count))
+        allocate(sshs(source_count))
+
+        DO j = 1, source_count
+            source_j = source_panel%points_inside(j)
+            sxs(j) = xs(source_j)
+            sys(j) = ys(source_j)
+            szs(j) = zs(source_j)
+            areas(j) = area(source_j)
+            sshs(j) = ssh(j)
+        END DO
+
+        ! compute potentials at proxy targets
+        DO j = 1, interp_degree+1 ! eta loop
+            eta = cheb_eta(j)
+            DO i = 1, interp_degree+1 ! xi loop
+                call xyz_from_xieta(cx, cy, cz, cheb_xi(i), eta, target_panel%face)
+                DO k = 1, source_count
+                    call sal_grad_gfunc(cx, cy, cz, sxs(k), sys(k), szs(k), sal_x, sal_y)
+                    proxy_pots_x(i,j) = proxy_pots_x(i,j) + sal_x*areas(k)*sshs(k)
+                    proxy_pots_y(i,j) = proxy_pots_y(i,j) + sal_y*areas(k)*sshs(k)
+                END DO
+            END DO
+        END DO
+
+        ! interpolate from proxy targets to real targets
+        DO i = 1, target_count
+            target_i = target_panel%points_inside(i)
+            tx = xs(target_i)
+            ty = ys(target_i)
+            tz = zs(target_i)
+            call xieta_from_xyz(tx, ty, tz, xi, eta, target_panel%face)
+            call interp_vals_bli(basis_vals, xi, eta, min_xi, max_xi, min_eta, max_eta, interp_degree)
+            DO k = 1, interp_degree+1 ! eta loop
+                DO j = 1, interp_degree+1 ! xi loop
+                    sal_longrad(target_i) = sal_longrad(target_i) + basis_vals(j, k)*proxy_pots_x(j, k)
+                    sal_latgrad(target_i) = sal_latgrad(target_i) + basis_vals(j, k)*proxy_pots_y(j, k)
+                END DO
+            END DO
+        END DO
+
     END SUBROUTINE
 
     SUBROUTINE cc_interact(sal_longrad, sal_latgrad, target_panel, source_panel, xs, ys, zs, area, ssh, interp_degree)
@@ -91,6 +206,85 @@ MODULE FAST_SUM_MODULE
         type(cube_panel), intent(in) :: target_panel, source_panel
         integer, intent(in) :: interp_degree
         real(8), intent(inout) :: sal_longrad(:), sal_latgrad(:)
+        real(8), allocatable :: cheb_xi_s(:), cheb_eta_s(:), cheb_xi_t(:), cheb_eta_t(:)
+        real(8), allocatable :: proxy_weights(:,:), proxy_pots_x(:,:), proxy_pots_y(:,:), basis_vals(:,:)
+        integer :: target_count, source_count, i, j, k, l, source_j, target_i
+        real(8) :: min_xi, max_xi, min_eta, max_eta, xi_t, eta_t, xi_s, eta_s, cxt, cyt, czt, cxs, cys, czs
+        real(8) :: sal_x, sal_y, sx, sy, sz, tx, ty, tz
+
+        target_count = target_panel%panel_point_count
+        source_count = source_panel%panel_point_count
+
+        min_xi = source_panel%min_xi
+        max_xi = source_panel%max_xi
+        min_eta = source_panel%min_eta
+        max_eta = source_panel%max_eta
+
+        call bli_interp_points_shift(cheb_xi_s, min_xi, max_xi, interp_degree)
+        call bli_interp_points_shift(cheb_eta_s, min_eta, max_eta, interp_degree)
+
+        allocate(proxy_weights(interp_degree+1, interp_degree+1), source=0.0_8)
+
+        ! compute proxy weights
+        DO i = 1, source_count
+            source_j = source_panel%points_inside(i)
+            sx = xs(source_j)
+            sy = ys(source_j)
+            sz = zs(source_j)
+            call xieta_from_xyz(sx, sy, sz, xi_s, eta_s, source_panel%face)
+            call interp_vals_bli(basis_vals, xi_s, eta_s, min_xi, max_xi, min_eta, max_eta, interp_degree)
+            DO k = 1, interp_degree+1 ! loop over eta
+                DO j = 1, interp_degree+1 ! loop over xi
+                    proxy_weights(j,k) = proxy_weights(j,k) + basis_vals(j, k)*area(source_j)*ssh(source_j)
+                END DO
+            END DO
+        END DO
+
+        min_xi = target_panel%min_xi
+        max_xi = target_panel%max_xi
+        min_eta = target_panel%min_eta
+        max_eta = target_panel%max_eta
+
+        call bli_interp_points_shift(cheb_xi_t, min_xi, max_xi, interp_degree)
+        call bli_interp_points_shift(cheb_eta_t, min_eta, max_eta, interp_degree)
+
+        allocate(proxy_pots_x(interp_degree+1, interp_degree+1), source=0.0_8)
+        allocate(proxy_pots_y(interp_degree+1, interp_degree+1), source=0.0_8)
+
+        ! compute proxy potentials from proxy weights
+        DO j = 1, interp_degree+1 ! target eta loop
+            eta_t = cheb_eta_t(j)
+            DO i = 1, interp_degree+1 ! target xi loop
+                xi_t = cheb_xi_t(i)
+                call xyz_from_xieta(cxt, cyt, czt, xi_t, eta_t, target_panel%face)
+                DO l = 1, interp_degree+1 ! source eta loop
+                    eta_s = cheb_eta_s(l)
+                    DO k = 1, interp_degree+1 ! source xi loop
+                        xi_s = cheb_xi_s(k)
+                        call xyz_from_xieta(cxs, cys, czs, xi_s, eta_s, source_panel%face)
+                        call sal_grad_gfunc(cxt, cyt, czt, cxs, cys, czs, sal_x, sal_y)
+                        proxy_pots_x(i, j) = proxy_pots_x(i, j) + sal_x*proxy_weights(k, l)
+                        proxy_pots_y(i, j) = proxy_pots_y(i, j) + sal_y*proxy_weights(k, l)
+                    END DO
+                END DO
+            END DO
+        END DO
+
+        ! interpolate from proxy target points to real targets
+        DO i = 1, target_count
+            target_i = target_panel%points_inside(i)
+            tx = xs(target_i)
+            ty = ys(target_i)
+            tz = zs(target_i)
+            call xieta_from_xyz(tx, ty, tz, xi_t, eta_t, target_panel%face)
+            call interp_vals_bli(basis_vals, xi_t, eta_t, min_xi, max_xi, min_eta, max_eta, interp_degree)
+            DO k = 1, interp_degree+1 ! eta loop
+                DO j = 1, interp_degree+1 ! xi loop
+                    sal_longrad(target_i) = sal_longrad(target_i) + basis_vals(j, k)*proxy_pots_x(j, k)
+                    sal_latgrad(target_i) = sal_latgrad(target_i) + basis_vals(j, k)*proxy_pots_y(j, k)
+                END DO
+            END DO
+        END DO
     END SUBROUTINE
 
     SUBROUTINE fast_sum(sal_longrad, sal_latgrad, interaction_list, cube_panels, xs, ys, zs, area, ssh, point_count, &
