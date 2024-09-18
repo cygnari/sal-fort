@@ -37,7 +37,7 @@ MODULE Tree_Module
         type(cube_panel), allocatable :: tree_panels_temp(:)
         integer, intent(in) :: point_count, cluster_thresh, process_rank
         real(8), intent(in) :: xs(point_count), ys(point_count), zs(point_count)
-        integer :: i, face, total, j, total2, panel_count, index, which_panel, count, k
+        integer :: i, face, total, j, panel_count, index, which_panel, count, k
         real(8) :: pi, xval, yval, zval, cube_xi, cube_eta, min_xi, max_xi, mid_xi, min_eta, mid_eta, max_eta, xi, eta
         real(8) :: x1, x2, x3, y1, y2, y3, d1, d2, d3, d4
         logical :: found, point_found
@@ -75,6 +75,18 @@ MODULE Tree_Module
             tree_panels_temp(face)%panel_point_count = tree_panels_temp(face)%panel_point_count + 1
             tree_panels_temp(face)%points_inside(curr_loc(face)) = i
         END DO
+
+        ! sanity check to make sure that the points were assigned correctly to the six top level panels
+        total = 0
+        DO i = 1, 6
+            total = total + tree_panels_temp(i)%panel_point_count
+        END DO
+
+        IF (process_rank == 0) THEN
+            IF (total /= point_count) THEN
+                print *, 'Total assigned points ', total, ' does not equal point count ', point_count
+            END IF
+        END IF
 
         ! resize the points_inside arrays of the top level panels
         DO i = 1, 6
@@ -193,6 +205,7 @@ MODULE Tree_Module
             min_eta = tree_panels(i)%min_eta
             mid_eta = tree_panels(i)%mid_eta
             max_eta = tree_panels(i)%max_eta
+            ! compute the furthest distance from panel center to vertex for each panel
             call xyz_from_xieta(x1, x2, x3, mid_xi, mid_eta, tree_panels(i)%face)
             call xyz_from_xieta(y1, y2, y3, min_xi, min_eta, tree_panels(i)%face)
             d1 = ACOS(MAX(MIN(x1*y1+x2*y2+x3*y3, 1.0_8), -1.0_8))
@@ -205,26 +218,10 @@ MODULE Tree_Module
             tree_panels(i)%radius = MAX(d1, d2, d3, d4)
         END DO
 
-        ! sanity check to make sure that the points were assigned correctly
-        total = 0
-        total2 = 0
-        DO i = 1, 6
-            total = total + tree_panels(i)%panel_point_count
-            total2 = total2 + size(tree_panels(i)%points_inside)
-        END DO
-
-        IF (process_rank == 0) THEN
-            IF (total /= point_count) THEN
-                print *, 'Total assigned points ', total, ' does not equal point count ', point_count
-            END IF
-
-            IF (total2 /= point_count) THEN
-                print *, 'Total assigned points with shrunk arrays ', total2, ' does not equal point count ', point_count
-            END IF
-        END IF
-
     END SUBROUTINE
 
+    ! dual tree traversal to compute interaction list
+    ! consider the tree of targets and tree of sources, work one panel at a time and determine if interact or refine
     SUBROUTINE DUAL_TREE_TRAVERSAL(interaction_list, tree_panels, param_theta, param_cluster_thresh)
         type(interaction_pair), allocatable, intent(out) :: interaction_list(:)
         type(cube_panel), intent(in) :: tree_panels(:)
@@ -257,7 +254,7 @@ MODULE Tree_Module
             i_s = source_index(curr_loc)
             c_t = tree_panels(i_t)%panel_point_count
             c_s = tree_panels(i_s)%panel_point_count
-            IF ((c_t > 0) .and. (c_s > 0)) THEN
+            IF ((c_t > 0) .and. (c_s > 0)) THEN ! check both panels have points
                 call xyz_from_xieta(x1t, x2t, x3t, tree_panels(i_t)%mid_xi, tree_panels(i_t)%mid_eta, tree_panels(i_t)%face)
                 call xyz_from_xieta(x1s, x2s, x3s, tree_panels(i_s)%mid_xi, tree_panels(i_s)%mid_eta, tree_panels(i_s)%face)
                 dist = ACOS(MIN(MAX(x1t*x1s+x2t*x2s+x3t*x3s, -1.0_8), 1.0_8))

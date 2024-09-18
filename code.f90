@@ -10,16 +10,14 @@ program main
     integer :: point_count, ierr, process_rank, total_ranks, i, cluster_thresh, interp_degree
     real(8), allocatable :: areas(:), xs(:), ys(:), zs(:), sshs(:), sal(:), sal_x(:), sal_y(:)
     type(cube_panel), allocatable :: tree_panels(:)
-    type(interaction_pair), allocatable :: interaction_list(:)
+    type(interaction_pair), allocatable :: interaction_list(:), own_interactions(:)
     NAMELIST /params/ theta, point_count, cluster_thresh, interp_degree
+    ! theta is fast sum theta parameter, cluster_thresh is point count threshold for cluster
+    ! interp_degree is the degree of the barycentric lagrange interpolation to do
 
     call MPI_INIT(ierr)
     call MPI_COMM_SIZE(MPI_COMM_WORLD, total_ranks, ierr)
     call MPI_COMM_RANK(MPI_COMM_WORLD, process_rank, ierr)
-
-    IF(cluster_thresh == -1) THEN
-        cluster_thresh = interp_degree * interp_degree + 2
-    END IF
 
     IF(process_rank == 0) THEN
         CALL CPU_TIME(t1)
@@ -70,7 +68,7 @@ program main
         CALL CPU_TIME(t1)
     END IF
 
-    ! construct the cubed sphere tree
+    ! construct the cubed sphere tree structure in tree_panels
     call tree_traverse(tree_panels, xs, ys, zs, point_count, cluster_thresh, process_rank)
 
     IF (process_rank == 0) THEN
@@ -81,7 +79,6 @@ program main
     END IF
 
     ! perform dual tree traversal to compute interaction lists
-
     call dual_tree_traversal(interaction_list, tree_panels, theta, cluster_thresh)
 
     IF (process_rank == 0) THEN
@@ -92,13 +89,11 @@ program main
     END IF
 
     ! fast summation to approximate the convolution
-
     allocate(sal_x(point_count), source=0.0_8)
     allocate(sal_y(point_count), source=0.0_8)
 
     CALL fast_sum(sal_x, sal_y, interaction_list, tree_panels, xs, ys, zs, areas, sshs, point_count, & 
                     interp_degree, process_rank, total_ranks)
-
 
     ! replace these two with reproducing sums if needed
     CALL Sum_Array(sal_x, point_count, MPI_COMM_WORLD, process_rank)

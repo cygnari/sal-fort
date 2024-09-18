@@ -9,9 +9,8 @@ MODULE FAST_SUM_MODULE
     SUBROUTINE sal_grad_gfunc(tx, ty, tz, sx, sy, sz, sal_x, sal_y)
         real(8), intent(in) :: tx, ty, tz, sx, sy, sz
         real(8), intent(out) :: sal_x, sal_y
-        real(8) :: g, mp, sqrtp, pi, cons, sqp, p1, p2, x32, val, mp2
+        real(8) :: g, mp, sqrtp, cons, sqp, p1, p2, x32, val, mp2
 
-        pi = 4.D0*DATAN(1.D0)
         cons = -2.343256857908601e-9_8
         ! cons = -7.029770573725803e-9_8
 
@@ -56,6 +55,7 @@ MODULE FAST_SUM_MODULE
             areas(j) = area(source_j)
         END DO
 
+        ! directly interact target and source points
         DO i = 1, target_panel%panel_point_count
             target_i = target_panel%points_inside(i)
             tx = xs(target_i)
@@ -95,7 +95,7 @@ MODULE FAST_SUM_MODULE
 
         allocate(proxy_weights(interp_degree+1, interp_degree+1), source=0.0_8)
 
-        ! compute proxy weights
+        ! compute proxy weights in the source
         DO i = 1, source_count
             source_j = source_panel%points_inside(i)
             sx = xs(source_j)
@@ -200,6 +200,7 @@ MODULE FAST_SUM_MODULE
 
     END SUBROUTINE
 
+    ! cluster cluster interaction
     SUBROUTINE cc_interact(sal_longrad, sal_latgrad, target_panel, source_panel, xs, ys, zs, area, ssh, interp_degree)
         real(8), intent(in) :: xs(:), ys(:), zs(:), area(:), ssh(:)
         type(cube_panel), intent(in) :: target_panel, source_panel
@@ -224,7 +225,7 @@ MODULE FAST_SUM_MODULE
 
         allocate(proxy_weights(interp_degree+1, interp_degree+1), source=0.0_8)
 
-        ! compute proxy weights
+        ! compute proxy weights in the source panel
         DO i = 1, source_count
             source_j = source_panel%points_inside(i)
             sx = xs(source_j)
@@ -250,7 +251,7 @@ MODULE FAST_SUM_MODULE
         allocate(proxy_pots_x(interp_degree+1, interp_degree+1), source=0.0_8)
         allocate(proxy_pots_y(interp_degree+1, interp_degree+1), source=0.0_8)
 
-        ! compute proxy potentials from proxy weights
+        ! compute proxy potentials in the target from proxy weights
         DO j = 1, interp_degree+1 ! target eta loop
             eta_t = cheb_eta_t(j)
             DO i = 1, interp_degree+1 ! target xi loop
@@ -286,6 +287,7 @@ MODULE FAST_SUM_MODULE
         END DO
     END SUBROUTINE
 
+    ! approximates the convolution with a fast sum
     SUBROUTINE fast_sum(sal_longrad, sal_latgrad, interaction_list, cube_panels, xs, ys, zs, area, ssh, point_count, &
                         interp_degree, rank, process_count)
         real(8), intent(in) :: xs(:), ys(:), zs(:), area(:), ssh(:)
@@ -299,7 +301,7 @@ MODULE FAST_SUM_MODULE
         interactions = 0
 
         DO i = 1, interaction_count
-            IF (MOD(i, process_count) == rank) THEN
+            IF (MOD(i, process_count) == rank) THEN ! evenly split interactions across processors
                 i_t = interaction_list(i)%index_target
                 i_s = interaction_list(i)%index_source
                 type = interaction_list(i)%interact_type
