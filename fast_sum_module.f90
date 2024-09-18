@@ -12,7 +12,6 @@ MODULE FAST_SUM_MODULE
         real(8) :: g, mp, sqrtp, pi, cons, sqp, p1, p2, x32, val, mp2
 
         pi = 4.D0*DATAN(1.D0)
-        ! cons = -3.0*1035.0/(3*6371000*4.0*pi*5517.0)
         cons = -2.343256857908601e-9_8
         ! cons = -7.029770573725803e-9_8
 
@@ -23,12 +22,12 @@ MODULE FAST_SUM_MODULE
             mp = 2.0_8-2.0_8*g
             sqp = SQRT(mp)
             p1 = (1.0_8-6.21196_8)/(sqp*mp+1e-16_8)
-            p2 = (2.7_8+6_8)*(2_8*g+sqp) / (2_8*(g*g-1.0_8)+1e-16_8)
+            p2 = (2.7_8+6.0_8)*(2_8*g+sqp) / (2.0_8*(g*g-1.0_8)+1e-16_8)
             val = (p1+p2)*cons
             x32 = tz*tz
             mp2 = SQRT(1.0_8-x32)
-            sal_x = (sz*(1-x32)-tz*(tx*sx+ty*sy))/mp2*val
-            sal_y = (tx*sy-ty*sx)/mp2*val
+            sal_y = (sz*(1.0_8-x32)-tz*(tx*sx+ty*sy))/mp2*val
+            sal_x = (tx*sy-ty*sx)/mp2*val
         END IF
     END SUBROUTINE
 
@@ -167,7 +166,7 @@ MODULE FAST_SUM_MODULE
             sys(j) = ys(source_j)
             szs(j) = zs(source_j)
             areas(j) = area(source_j)
-            sshs(j) = ssh(j)
+            sshs(j) = ssh(source_j)
         END DO
 
         ! compute potentials at proxy targets

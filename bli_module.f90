@@ -17,9 +17,9 @@ MODULE BLI_MODULE
                 IF (i == 1) THEN
                     coeffs(i) = 0.5_8
                 ELSE IF (i == degree + 1) THEN
-                    coeffs(i) = 0.5_8 * ((-1) ** i)
+                    coeffs(i) = 0.5_8 * ((-1) ** (i+1))
                 ELSE
-                    coeffs(i) = (-1.0_8) ** i
+                    coeffs(i) = (-1.0_8) ** (i+1)
                 END IF
             END DO
         END IF
@@ -105,8 +105,8 @@ MODULE BLI_MODULE
         END IF
 
         ! compute the outer product
-        DO i = 1, degree + 1
-            DO j = 1, degree + 1
+        DO j = 1, degree + 1
+            DO i = 1, degree + 1
                 vals(i, j) = xi_func_vals(i) * eta_func_vals(j)
             END DO
         END DO
