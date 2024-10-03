@@ -39,7 +39,7 @@ MODULE BLI_MODULE
         x_shift = 0.5*(max_x + min_x)
 
         IF (degree == 0) THEN
-            interp_points(0) = x_shift
+            interp_points(1) = x_shift
         ELSE 
             DO i = 1, degree + 1
                 interp_points(i) = COS(pi/degree*(i-1))*x_range + x_shift

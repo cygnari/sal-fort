@@ -45,4 +45,28 @@ MODULE MPI_Module
         CALL MPI_WIN_Fence(0, win, ierr)
         CALL MPI_WIN_Free(win, ierr)
     END SUBROUTINE
+
+    SUBROUTINE Gather_points(val, array, comm, p, id)
+        ! each rank has val, construct array with vals from each processor
+        use mpi
+        integer, intent(in) :: val, comm, p, id
+        integer, intent(out) :: array(:)
+        integer :: ierr
+        call MPI_Barrier(comm, ierr)
+        call MPI_Allgather(val, 1, MPI_Integer, array, 1, MPI_Integer, comm, ierr)
+        call MPI_Barrier(comm, ierr)
+    END SUBROUTINE
+
+    SUBROUTINE Gather_point_data(data, all_points, own_points, point_count, proc_points, starting_points, comm, p, id)
+        use mpi
+        real(8), intent(in) :: data(:)
+        real(8), intent(out) :: all_points(:)
+        integer, intent(in) :: starting_points(:), proc_points(:)
+        integer, intent(in) :: comm, p, id, own_points, point_count
+        integer :: ierr
+        call MPI_Barrier(comm, ierr)
+        call MPI_Allgatherv(data, own_points, MPI_DOUBLE_PRECISION, all_points, proc_points, starting_points, &
+                            MPI_DOUBLE_PRECISION, comm, ierr)
+        call MPI_Barrier(comm, ierr)
+    END SUBROUTINE
 END MODULE
