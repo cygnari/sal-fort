@@ -20,6 +20,7 @@ MODULE Tree_Module
         real(8) :: max_eta
         real(8) :: radius ! distance from center of panel to corner
         integer, allocatable :: points_inside(:)
+        integer, allocatable :: relabeled_points_inside(:)
         integer :: panel_point_count = 0
 
         contains
@@ -222,6 +223,7 @@ MODULE Tree_Module
         allocate(tree_panels(panel_count))
         DO i = 1, panel_count
             tree_panels(i) = tree_panels_temp(i)
+            tree_panels(i)%relabeled_points_inside = tree_panels(i)%points_inside
             min_xi = tree_panels(i)%min_xi
             mid_xi = tree_panels(i)%mid_xi
             max_xi = tree_panels(i)%max_xi
@@ -396,13 +398,13 @@ MODULE Tree_Module
     END SUBROUTINE
 
     ! performs tree traversal only with the source tree for individual target particles
-    SUBROUTINE SINGLE_TREE_TRAVERSAL(interaction_list, tree_panels, param_theta, param_cluster_thresh, xs, ys, zs, &
-                                        own_points)
-        type(interaction_pair), allocatable, intent(out) :: interaction_list(:)
+    SUBROUTINE SINGLE_TREE_TRAVERSAL(pc_interaction_list, pp_interaction_list, tree_panels, param_theta, param_cluster_thresh, &
+                                        xs, ys, zs, own_points)
+        type(interaction_pair), allocatable, intent(out) :: pc_interaction_list(:), pp_interaction_list(:)
         type(cube_panel), intent(in) :: tree_panels(:)
         real(8), intent(in) :: param_theta, xs(:), ys(:), zs(:)
         integer, intent(in) :: param_cluster_thresh, own_points
-        integer :: interaction_count, curr_loc, i, j, i_t, i_s, c_t, c_s, tree_traverse_count, int_type
+        integer :: interaction_count, curr_loc, i, j, i_t, i_s, c_t, c_s, tree_traverse_count, int_type, pc_count, pp_count, k, l
         real(8) :: x1t, x2t, x3t, x1s, x2s, x3s, dist, separation
         integer, allocatable :: source_index(:)
         type(interaction_pair), allocatable :: interaction_lists_temp(:)
@@ -412,6 +414,8 @@ MODULE Tree_Module
         allocate(interaction_lists_temp(own_points*128))
 
         interaction_count = 0
+        pp_count = 0
+        pc_count = 0
         DO i = 1, own_points ! loop over own target points
             tree_traverse_count = 6
             DO j = 1, 6
@@ -442,12 +446,14 @@ MODULE Tree_Module
                         interaction_lists_temp(interaction_count)%index_target = i
                         interaction_lists_temp(interaction_count)%index_source = i_s
                         interaction_lists_temp(interaction_count)%interact_type = 1
+                        pc_count = pc_count + 1
                     ELSE IF (tree_panels(i_s)%is_leaf) THEN
                         ! source panel is a leaf, cannot refine further
                         interaction_count = interaction_count + 1
                         interaction_lists_temp(interaction_count)%index_target = i
                         interaction_lists_temp(interaction_count)%index_source = i_s
                         interaction_lists_temp(interaction_count)%interact_type = 0
+                        pp_count = pp_count + 1
                     ELSE 
                         ! source panel is not a leaf and is not well separated, refine 
                         source_index(tree_traverse_count+1) = tree_panels(i_s)%child_panel_1
@@ -461,17 +467,26 @@ MODULE Tree_Module
             END DO
         END DO
 
-        allocate(interaction_list(interaction_count))
+        allocate(pc_interaction_list(pc_count))
+        allocate(pp_interaction_list(pp_count))
+        k = 0
+        l = 0
         DO i = 1, interaction_count
-            interaction_list(i) = interaction_lists_temp(i)
+            IF (interaction_lists_temp(i)%interact_type == 1) THEN
+                k = k + 1
+                pc_interaction_list(k) = interaction_lists_temp(i)
+            ELSE
+                l = l + 1
+                pp_interaction_list(l) = interaction_lists_temp(i)
+            END IF
         END DO
     END SUBROUTINE
 
     ! see which points are needed for pp interactions that a processor does not own
-    SUBROUTINE unowned_sources(starting_point_proc, interaction_list, tree_panels, P, ID, unowned_points, &
+    SUBROUTINE unowned_sources(starting_point_proc, pp_interaction_list, tree_panels, P, ID, unowned_points, &
                                 points_per_proc, total_points)
         integer, intent(in) :: starting_point_proc(:), P, ID, total_points
-        type(interaction_pair), intent(in) :: interaction_list(:)
+        type(interaction_pair), intent(in) :: pp_interaction_list(:)
         type(cube_panel), intent(in) :: tree_panels(:)
         integer, intent(out), allocatable :: unowned_points(:,:), points_per_proc(:)
         integer, allocatable :: unowned_points_temp(:,:)
@@ -490,40 +505,41 @@ MODULE Tree_Module
             own_max = starting_point_proc(ID+2)-1
         END IF
 
-        iloop: DO i = 1, size(interaction_list)
-            ! go through all the interactions
-            IF (interaction_list(i)%interact_type == 0) THEN
-                ! particle particle interaction
-                i_s = interaction_list(i)%index_source
-                jloop: DO j = 1, tree_panels(i_s)%panel_point_count
-                    ! loop over points in source panel
-                    i_sp = tree_panels(i_s)%points_inside(j)
-                    IF ((i_sp < own_min) .or. (i_sp > own_max)) THEN
-                        ! point is not owned
-                        points_needed = points_needed + 1
-                        kloop: DO k = 1, P 
-                            ! loop over points, find which processor owns it
-                            kmin = starting_point_proc(k)
+        iloop: DO i = 1, size(pp_interaction_list)
+            ! particle particle interaction
+            i_s = pp_interaction_list(i)%index_source
+            jloop: DO j = 1, tree_panels(i_s)%panel_point_count
+                ! loop over points in source panel
+                i_sp = tree_panels(i_s)%points_inside(j)
+                IF ((i_sp < own_min) .or. (i_sp > own_max)) THEN
+                    ! point is not owned
+                    points_needed = points_needed + 1
+                    kloop: DO k = 1, P 
+                        ! loop over points, find which processor owns it
+                        kmin = starting_point_proc(k)
+                        IF (k == P) THEN
+                            kmax = total_points
+                        ELSE
                             kmax = starting_point_proc(k+1)-1
-                            IF ((i_sp <= kmax) .and. (i_sp >= kmin)) THEN
-                                ! point i_sp owned by processor k (MPI rank k-1)
-                                found = .false.
-                                lloop: DO l = 1, points_per_proc(k)
-                                    ! check if l is already contained in unowned_points_temp
-                                    IF (unowned_points_temp(l, k) == i_sp) THEN
-                                        found = .true.
-                                    END IF
-                                END DO lloop
-                                IF (.not. found) THEN
-                                    points_per_proc(k) = points_per_proc(k) + 1
-                                    unowned_points_temp(points_per_proc(k), k) = i_sp
+                        END IF
+                        IF ((i_sp <= kmax) .and. (i_sp >= kmin)) THEN
+                            ! point i_sp owned by processor k (MPI rank k-1)
+                            found = .false.
+                            lloop: DO l = 1, points_per_proc(k)
+                                ! check if l is already contained in unowned_points_temp
+                                IF (unowned_points_temp(l, k) == i_sp) THEN
+                                    found = .true.
                                 END IF
-                                exit kloop
+                            END DO lloop
+                            IF (.not. found) THEN
+                                points_per_proc(k) = points_per_proc(k) + 1
+                                unowned_points_temp(points_per_proc(k), k) = i_sp
                             END IF
-                        END DO kloop
-                    END IF
-                END DO jloop
-            END IF
+                            exit kloop
+                        END IF
+                    END DO kloop
+                END IF
+            END DO jloop
         END DO iloop
 
         kmax = 0
@@ -540,6 +556,68 @@ MODULE Tree_Module
 
     END SUBROUTINE
 
-    SUBROUTINE relabel_copy_unowned(e_xs, e_ys, e_zs, e_areas, unowned_points, xs_t, ys_t, zs_t, areas_t)
+    ! for all the unowned source points that a processor needs for particle particle interactions
+    ! relabel them so that they are contiguous in e_xs/e_ys/e_zs using values from xs/ys/zs_t 
+    ! renumber them in tree_panels as well
+    SUBROUTINE relabel_copy_unowned(e_xs, e_ys, e_zs, e_areas, unowned_points, xs_t, ys_t, zs_t, areas_t, tree_panels, &
+                                    P, ID, unowned_points_count, own_points, starting_points)
+        real(8), intent(out) :: e_xs(unowned_points_count), e_ys(unowned_points_count), e_zs(unowned_points_count), &
+                                e_areas(unowned_points_count)
+        integer, intent(in) :: unowned_points(:,:), P, ID, unowned_points_count, own_points, starting_points(:)
+        real(8), intent(in) :: xs_t(:), ys_t(:), zs_t(:), areas_t(:)
+        type(cube_panel), intent(inout) :: tree_panels(:)
+        ! integer, intent(out) :: relabel_map(:)
+        integer :: curr_index, i, j, i_p, k, l, min_i, max_i
+        logical :: found
+
+        min_i = starting_points(ID+1)
+        max_i = min_i+own_points
+
+        DO i = 1, size(tree_panels)
+            DO j = 1, tree_panels(i)%panel_point_count
+                i_p = tree_panels(i)%points_inside(j)
+                IF ((i_p >= min_i) .and. (i_p < max_i)) THEN
+                    tree_panels(i)%relabeled_points_inside(j) = i_p-min_i+1
+                END IF
+            END DO
+        END DO
+
+        curr_index = 0
+        DO i = 1, P
+            DO j = 1, size(unowned_points, 1)
+                ! loop over points in unowned arrays
+                ! print *, i, j
+                i_p = unowned_points(j, i)
+                IF (i_p .ne. -1) THEN
+                    curr_index = curr_index + 1
+                    e_xs(curr_index) = xs_t(i_p)
+                    e_ys(curr_index) = ys_t(i_p)
+                    e_zs(curr_index) = zs_t(i_p)
+                    e_areas(curr_index) = areas_t(i_p)
+                    k = 1
+                    ! relabel_map(i_p) = curr_index
+                    treeloop: DO ! do loop over tree panels
+                        IF (k == -1) THEN ! leaf index
+                            exit treeloop
+                        ELSE
+                            found = .false.
+                            lloop: DO l = 1, tree_panels(k)%panel_point_count
+                                IF (i_p == tree_panels(k)%points_inside(l)) THEN
+                                    found = .true.
+                                    tree_panels(k)%relabeled_points_inside(l) = own_points+curr_index
+                                    exit lloop
+                                END IF
+                            END DO lloop
+                            IF (found) THEN
+                                k = tree_panels(k)%child_panel_1
+                            ELSE
+                                k = k + 1
+                            END IF
+                        END IF
+                    END DO treeloop
+                END IF  
+            END DO
+        END DO
+    END SUBROUTINE
 
 END MODULE Tree_Module

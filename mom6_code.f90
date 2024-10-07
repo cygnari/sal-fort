@@ -2,19 +2,31 @@ program main
     use mpi
     use tree_module
     use cube_sphere_module
-    use fast_sum_module
+    use mom6_fast_sum_module
     use mpi_module
     implicit none
 
     real(8) :: theta, area, t1, t2, min_x, max_x, min_y, max_y, min_z, max_z, x, y, z, a, ssh
     integer :: point_count, ierr, process_rank, total_ranks, i, cluster_thresh, interp_degree, own_points
-    integer :: max_level, level, j, unowned_needed_points, duplicates
+    integer :: max_level, level, j, unowned_needed_points, duplicates, interact_count, k
     real(8), allocatable :: areas(:), xs(:), ys(:), zs(:), sshs(:), sal(:), sal_x(:), sal_y(:), e_areas(:)
+    ! xs, ys, zs are the locations of the points that a processor owns
     real(8), allocatable :: areas_t(:), xs_t(:), ys_t(:), zs_t(:), sshs_t(:), e_xs(:), e_ys(:), e_zs(:), e_sshs(:)
+    ! xs_t, ys_t, zs_t are all the points across all the ranks, used only for initial tree traversal/interaction list computation
+    ! e_xs, e_ys, e_zs are the points that a processor doesn't own but needs for pp interactions
+    ! e_sshs are the corresponding unowned areas that need to be communicated
+    real(8), allocatable :: proxy_source_weights(:), sal_xs(:), sal_ys(:)
     integer, allocatable :: points_per_proc(:), starting_point_proc(:), point_proc_id(:), points_panels(:,:)
-    integer, allocatable :: needed_points_proc(:), unowned_points(:,:)
+    integer, allocatable :: needed_points_proc(:), unowned_points(:,:), points_to_give_proc(:)
+    ! unowned points are the points needed for PP interactions that a processor does not own
+    ! 2d array, second dim is processor index
+    ! needed_points_proc is how many points are needed from each other rank
+    ! points_to_give_proc is how many points are to be given to each other rank
+    integer, allocatable :: points_needed_from_proc(:), points_send_proc(:,:)
+    ! points_send_proc is a list of sshs to send each processor
+    ! 2d array, second dim is processor index
     type(cube_panel), allocatable :: tree_panels(:)
-    type(interaction_pair), allocatable :: interaction_list(:), own_interactions(:)
+    type(interaction_pair), allocatable :: pc_interaction_list(:), pp_interaction_list(:)
     NAMELIST /params/ theta, point_count, cluster_thresh, interp_degree
     ! theta is fast sum theta parameter, cluster_thresh is point count threshold for cluster
     ! interp_degree is the degree of the barycentric lagrange interpolation to do
@@ -23,7 +35,7 @@ program main
     call MPI_COMM_SIZE(MPI_COMM_WORLD, total_ranks, ierr)
     call MPI_COMM_RANK(MPI_COMM_WORLD, process_rank, ierr)
 
-    ! domain decomposition
+    ! domain decomposition, relatively naive way of splitting up the earth
     IF (total_ranks == 1) THEN
         min_x = -2.0_8
         max_x = 2.0_8
@@ -171,7 +183,7 @@ program main
     ! determine which panels own points are in
 
     max_level = tree_panels(size(tree_panels))%level
-    allocate(points_panels(max_level, own_points), source = -1)
+    allocate(points_panels(max_level+1, own_points), source = -1)
 
     call assign_points_to_panels(xs, ys, zs, points_panels, tree_panels, own_points)
 
@@ -183,7 +195,8 @@ program main
 
     ! perform single tree traversal to compute interaction lists
 
-    call single_tree_traversal(interaction_list, tree_panels, theta, cluster_thresh, xs, ys, zs, own_points)
+    call single_tree_traversal(pc_interaction_list, pp_interaction_list, tree_panels, theta, cluster_thresh, &
+                                xs, ys, zs, own_points)
 
     IF (process_rank == 0) THEN
         CALL CPU_TIME(t2)
@@ -191,65 +204,121 @@ program main
         CALL CPU_TIME(t1)
     END IF
     call MPI_Barrier(MPI_COMM_WORLD, ierr)
-    print *, 'total interactions: ', size(interaction_list), ' average interactions per point: ', &
-                1.0_8*size(interaction_list)/own_points
+
+    interact_count = size(pc_interaction_list) + size(pp_interaction_list)
+
+    print *, 'total interactions: ', interact_count, ' average interactions per point: ', &
+                1.0_8*interact_count/own_points
+    print *, 'pc interactions: ', size(pc_interaction_list), ' pp interactions: ', size(pp_interaction_list)
 
     ! compute source points from other processors that are needed
 
-    call unowned_sources(starting_point_proc, interaction_list, tree_panels, total_ranks, process_rank, unowned_points, &
+    call unowned_sources(starting_point_proc, pp_interaction_list, tree_panels, total_ranks, process_rank, unowned_points, &
                             needed_points_proc, point_count)
 
     unowned_needed_points = 0
     DO i = 1, total_ranks
-        ! print *, process_rank, i, needed_points_proc(i)
         unowned_needed_points = unowned_needed_points + needed_points_proc(i)
     END DO
     print *, 'process ', process_rank, 'needs ', unowned_needed_points, ' unowned points'
     call MPI_Barrier(MPI_COMM_WORLD, ierr)
-    ! IF (process_rank == 3) THEN
-    !     DO i = 1, total_ranks
-    !         DO j = 1, needed_points_proc(i)
-    !             print *, i, j, unowned_points(j, i)
-    !         END DO
-    !     END DO
-    ! END IF
 
-    allocate(e_xs(unowned_needed_points))
-    allocate(e_ys(unowned_needed_points))
-    allocate(e_zs(unowned_needed_points))
-    allocate(e_sshs(unowned_needed_points))
-    allocate(e_areas(unowned_needed_points))
+    allocate(e_xs(unowned_needed_points), source=0.0_8)
+    allocate(e_ys(unowned_needed_points), source=0.0_8)
+    allocate(e_zs(unowned_needed_points), source=0.0_8)
+    allocate(e_sshs(unowned_needed_points), source=0.0_8)
+    allocate(e_areas(unowned_needed_points), source=0.0_8)
 
-    
+    call relabel_copy_unowned(e_xs, e_ys, e_zs, e_areas, unowned_points, xs_t, ys_t, zs_t, areas_t, tree_panels, &
+                                    total_ranks, process_rank, unowned_needed_points, own_points, &
+                                    starting_point_proc)
 
-    ! ! fast summation to approximate the convolution
-    ! allocate(sal_x(point_count), source=0.0_8)
-    ! allocate(sal_y(point_count), source=0.0_8)
+    IF (process_rank == 0) THEN
+        CALL CPU_TIME(t2)
+        print *, 'relabel time: ',(t2 - t1)
+        CALL CPU_TIME(t1)
+    END IF
 
-    ! CALL fast_sum(sal_x, sal_y, interaction_list, tree_panels, xs, ys, zs, areas, sshs, point_count, & 
-    !                 interp_degree, process_rank, total_ranks)
+    ! communicate needed SSHs
 
-    ! ! replace these two with reproducing sums if needed
-    ! CALL Sum_Array(sal_x, point_count, MPI_COMM_WORLD, process_rank)
-    ! CALL Sum_array(sal_y, point_count, MPI_COMM_WORLD, process_rank)
+    call Communicate_sshs_pre(unowned_points, own_points, starting_point_proc, MPI_COMM_WORLD, &
+                                total_ranks, process_rank, points_to_give_proc, needed_points_proc, &
+                                points_send_proc)
 
-    ! IF (process_rank == 0) THEN
-    !     CALL CPU_TIME(t2)
-    !     print *, 'Integration time: ',(t2 - t1)
-    !     CALL CPU_TIME(t1)
+    call MPI_Barrier(MPI_COMM_WORLD, ierr)
 
-    !     open(file='./run-output/2313486_sal_x.csv', status='replace', unit = 15)
-    !     open(file='./run-output/2313486_sal_y.csv', status='replace', unit = 16)
-    !     DO i = 1, point_count
-    !         write(15, *) sal_x(i)
-    !         write(16, *) sal_y(i)
-    !     END DO
-    !     close(15)
-    !     close(16)
+    call Communicate_sshs(sshs, e_sshs, points_send_proc, points_to_give_proc, needed_points_proc, &
+                                unowned_needed_points, MPI_COMM_WORLD, total_ranks, process_rank)
 
-    !     CALL CPU_TIME(t2)
-    !     print *, 'Output write time: ', (t2-t1)
-    ! END IF
+    call MPI_Barrier(MPI_COMM_WORLD, ierr)
+    IF (process_rank == 0) THEN
+        CALL CPU_TIME(t2)
+        print *, 'sshs communication time: ',(t2 - t1)
+        CALL CPU_TIME(t1)
+    END IF
+
+    ! fast summation to approximate the convolution
+    ! first compute proxy source weights
+    allocate(proxy_source_weights((interp_degree+1)*(interp_degree+1)*size(tree_panels)), source=0.0_8)
+
+    call proxy_source_compute(proxy_source_weights, tree_panels, points_panels, xs, ys, zs, sshs, areas, interp_degree, &
+                                    own_points)
+
+    call Sum_Array(proxy_source_weights, (interp_degree+1)*(interp_degree+1)*size(tree_panels), MPI_COMM_WORLD, process_rank)
+
+    call MPI_Barrier(MPI_COMM_WORLD, ierr)
+    IF (process_rank == 0) THEN
+        CALL CPU_TIME(t2)
+        print *, 'proxy source computation time: ',(t2 - t1)
+        CALL CPU_TIME(t1)
+    END IF
+
+    allocate(sal_x(own_points), source=0.0_8)
+    allocate(sal_y(own_points), source=0.0_8)
+
+    call pc_compute(sal_x, sal_y, pc_interaction_list, tree_panels, xs, ys, zs, interp_degree, proxy_source_weights)
+
+    call MPI_Barrier(MPI_COMM_WORLD, ierr)
+    IF (process_rank == 0) THEN
+        CALL CPU_TIME(t2)
+        print *, 'pc computation time: ',(t2 - t1)
+        CALL CPU_TIME(t1)
+    END IF
+
+    call pp_compute(sal_x, sal_y, pp_interaction_list, tree_panels, xs, ys, zs, areas, sshs, e_xs, e_ys, e_zs, e_areas, &
+                    e_sshs, own_points)
+
+    IF (process_rank == 0) THEN
+        CALL CPU_TIME(t2)
+        print *, 'pp computation time: ',(t2 - t1)
+        CALL CPU_TIME(t1)
+    END IF
+
+    allocate(sal_xs(point_count), source=0.0_8)
+    allocate(sal_ys(point_count), source=0.0_8)
+
+    call Gather_point_data(sal_x, sal_xs, own_points, point_count, points_per_proc, starting_point_proc, &
+                            MPI_COMM_WORLD, total_ranks, process_rank)
+    call Gather_point_data(sal_y, sal_ys, own_points, point_count, points_per_proc, starting_point_proc, &
+                            MPI_COMM_WORLD, total_ranks, process_rank)
+
+    IF (process_rank == 0) THEN
+        CALL CPU_TIME(t2)
+        print *, 'Communication time: ',(t2 - t1)
+        CALL CPU_TIME(t1)
+
+        open(file='./run-output/2313486_sal_x.csv', status='replace', unit = 15)
+        open(file='./run-output/2313486_sal_y.csv', status='replace', unit = 16)
+        DO i = 1, point_count
+            write(15, *) sal_xs(i)
+            write(16, *) sal_ys(i)
+        END DO
+        close(15)
+        close(16)
+
+        CALL CPU_TIME(t2)
+        print *, 'Output write time: ', (t2-t1)
+    END IF
 
     call MPI_FINALIZE(ierr)
 
