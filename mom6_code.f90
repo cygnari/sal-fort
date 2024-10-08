@@ -236,6 +236,14 @@ program main
                                     total_ranks, process_rank, unowned_needed_points, own_points, &
                                     starting_point_proc)
 
+    IF (process_rank .ne. 0) THEN
+        deallocate(xs_t)
+        deallocate(ys_t)
+        deallocate(zs_t)
+        deallocate(areas_t)
+        deallocate(sshs_t)
+    END IF
+
     IF (process_rank == 0) THEN
         CALL CPU_TIME(t2)
         print *, 'relabel time: ',(t2 - t1)
