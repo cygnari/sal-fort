@@ -30,48 +30,6 @@ MODULE MOM6_FAST_SUM_MODULE
         END IF
     END SUBROUTINE
 
-    ! SUBROUTINE pp_interact(sal_longrad, sal_latgrad, target_panel, source_panel, xs, ys, zs, area, ssh, interp_degree)
-    !     real(8), intent(in) :: xs(:), ys(:), zs(:), area(:), ssh(:)
-    !     type(cube_panel), intent(in) :: target_panel, source_panel
-    !     integer, intent(in) :: interp_degree
-    !     real(8), intent(inout) :: sal_longrad(:), sal_latgrad(:)
-    !     real(8), allocatable :: sxs(:), sys(:), szs(:), sshs(:), areas(:)
-    !     integer :: target_i, source_j, source_count, i, j
-    !     real(8) :: tx, ty, tz, sx, sy, sz, sal_x, sal_y
-
-    !     source_count = source_panel%panel_point_count
-    !     allocate(sxs(source_count))
-    !     allocate(sys(source_count))
-    !     allocate(szs(source_count))
-    !     allocate(sshs(source_count))
-    !     allocate(areas(source_count))
-
-    !     DO j= 1, source_count
-    !         source_j = source_panel%points_inside(j)
-    !         sxs(j) = xs(source_j)
-    !         sys(j) = ys(source_j)
-    !         szs(j) = zs(source_j)
-    !         sshs(j) = ssh(source_j)
-    !         areas(j) = area(source_j)
-    !     END DO
-
-    !     ! directly interact target and source points
-    !     DO i = 1, target_panel%panel_point_count
-    !         target_i = target_panel%points_inside(i)
-    !         tx = xs(target_i)
-    !         ty = ys(target_i)
-    !         tz = zs(target_i)
-    !         DO j = 1, source_count
-    !             sx = sxs(j)
-    !             sy = sys(j)
-    !             sz = szs(j)
-    !             call sal_grad_gfunc(tx, ty, tz, sx, sy, sz, sal_x, sal_y)
-    !             sal_longrad(target_i) = sal_longrad(target_i) + sal_x*areas(j)*sshs(j)
-    !             sal_latgrad(target_i) = sal_latgrad(target_i) + sal_y*areas(j)*sshs(j)
-    !         END DO
-    !     END DO
-    ! END SUBROUTINE
-
     SUBROUTINE proxy_source_compute(proxy_source_weights, tree_panels, points_panels, xs, ys, zs, sshs, areas, interp_degree, &
                                     point_count)
         ! compute the proxy source contributions from each point that the processor owns
@@ -161,6 +119,8 @@ MODULE MOM6_FAST_SUM_MODULE
         ty = ys(i_t)
         tz = zs(i_t)
 
+        ! print *, i_t
+
         DO i = 1, source_panel%panel_point_count
             i_s = source_panel%relabeled_points_inside(i)
             ! i_sr = relabel_map(i_s)
@@ -180,8 +140,12 @@ MODULE MOM6_FAST_SUM_MODULE
                 area = as(i_s)
             END IF
             call sal_grad_gfunc(tx, ty, tz, sx, sy, sz, sal_x, sal_y)
+            ! print *, sal_x, sal_y
+            ! print *, ssh, area
+            ! print *, sal_latgrad(i_t)
             sal_longrad(i_t) = sal_longrad(i_t) + ssh*area*sal_x
             sal_latgrad(i_t) = sal_latgrad(i_t) + ssh*area*sal_y
+            ! print *, sal_latgrad(i_t)
         END DO
     END SUBROUTINE
 
@@ -226,48 +190,4 @@ MODULE MOM6_FAST_SUM_MODULE
                                 e_areas, e_sshs, own_points)
         END DO
     END SUBROUTINE
-
-    ! approximates the convolution with a fast sum
-    ! SUBROUTINE fast_sum(sal_longrad, sal_latgrad, interaction_list, cube_panels, xs, ys, zs, area, ssh, point_count, &
-    !                     interp_degree, rank, process_count)
-    !     real(8), intent(in) :: xs(:), ys(:), zs(:), area(:), ssh(:)
-    !     type(cube_panel), intent(in) :: cube_panels(:)
-    !     type(interaction_pair), intent(in) :: interaction_list(:)
-    !     integer, intent(in) :: point_count, interp_degree, rank, process_count
-    !     real(8), intent(inout) :: sal_longrad(:), sal_latgrad(:)
-    !     integer :: interaction_count, i_t, i_s, i, type, interactions
-
-    !     interaction_count = size(interaction_list)
-    !     interactions = 0
-
-    !     DO i = 1, interaction_count
-    !         IF (MOD(i, process_count) == rank) THEN ! evenly split interactions across processors
-    !             i_t = interaction_list(i)%index_target
-    !             i_s = interaction_list(i)%index_source
-    !             type = interaction_list(i)%interact_type
-    !             interactions = interactions + 1
-    !             IF (type == 0) THEN
-    !                 call pp_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-    !                                     area, ssh, interp_degree)
-    !                 ! call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-    !                 !                     area, ssh, interp_degree)
-    !             ELSE IF (type == 1) THEN
-    !                 call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-    !                                     area, ssh, interp_degree)
-    !             ELSE IF (type == 2) THEN
-    !                 ! call cp_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-    !                 !                     area, ssh, interp_degree)
-    !                 call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-    !                                     area, ssh, interp_degree)
-    !             ELSE IF (type == 3) THEN
-    !                 ! call cc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-    !                 !                     area, ssh, interp_degree)
-    !                 call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-    !                                     area, ssh, interp_degree)
-    !             END IF
-    !         END IF
-    !     END DO
-
-    !     print *, 'Rank: ', rank, ' interactions: ', interactions
-    ! END SUBROUTINE
 END MODULE

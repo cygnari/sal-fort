@@ -61,13 +61,16 @@ MODULE MPI_Module
         use mpi
         real(8), intent(in) :: data(:)
         real(8), intent(out) :: all_points(:)
-        integer, intent(in) :: starting_points(:), proc_points(:)
+        integer, intent(inout) :: starting_points(:), proc_points(:)
         integer, intent(in) :: comm, p, id, own_points, point_count
         integer :: ierr
+        
+        ! print *, own_points, proc_points(ID+1), starting_points(ID+1)
         call MPI_Barrier(comm, ierr)
-        call MPI_Allgatherv(data, own_points, MPI_DOUBLE_PRECISION, all_points, proc_points, starting_points, &
+        call MPI_Allgatherv(data, size(data), MPI_DOUBLE_PRECISION, all_points, proc_points, starting_points-1, &
                             MPI_DOUBLE_PRECISION, comm, ierr)
         call MPI_Barrier(comm, ierr)
+        ! print *, all_points(1), data(1)
     END SUBROUTINE
 
     ! do precomputation for ssh precomputation

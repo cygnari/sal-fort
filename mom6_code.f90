@@ -17,6 +17,7 @@ program main
     ! e_sshs are the corresponding unowned areas that need to be communicated
     real(8), allocatable :: proxy_source_weights(:), sal_xs(:), sal_ys(:)
     integer, allocatable :: points_per_proc(:), starting_point_proc(:), point_proc_id(:), points_panels(:,:)
+    ! points_panels(:,i) is the panels containing point i
     integer, allocatable :: needed_points_proc(:), unowned_points(:,:), points_to_give_proc(:)
     ! unowned points are the points needed for PP interactions that a processor does not own
     ! 2d array, second dim is processor index
@@ -169,6 +170,8 @@ program main
                             MPI_COMM_WORLD, total_ranks, process_rank)
     call Gather_point_data(zs, zs_t, own_points, point_count, points_per_proc, starting_point_proc, &
                             MPI_COMM_WORLD, total_ranks, process_rank)
+    call Gather_point_data(areas, areas_t, own_points, point_count, points_per_proc, starting_point_proc, &
+                            MPI_COMM_WORLD, total_ranks, process_rank)
 
     ! construct cubed sphere tree
     call tree_traverse(tree_panels, xs_t, ys_t, zs_t, point_count, cluster_thresh, process_rank)
@@ -264,9 +267,22 @@ program main
     call proxy_source_compute(proxy_source_weights, tree_panels, points_panels, xs, ys, zs, sshs, areas, interp_degree, &
                                     own_points)
 
+    ! IF (process_rank == 0) THEN
+    !     DO i = 1, size(proxy_source_weights)
+    !         print *, proxy_source_weights(i)
+    !     END DO
+    ! END IF
+
     call Sum_Array(proxy_source_weights, (interp_degree+1)*(interp_degree+1)*size(tree_panels), MPI_COMM_WORLD, process_rank)
 
     call MPI_Barrier(MPI_COMM_WORLD, ierr)
+
+    ! IF (process_rank == 0) THEN
+    !     DO i = 1, 4
+    !         print *, proxy_source_weights(i)
+    !     END DO
+    ! END IF
+
     IF (process_rank == 0) THEN
         CALL CPU_TIME(t2)
         print *, 'proxy source computation time: ',(t2 - t1)
@@ -288,6 +304,7 @@ program main
     call pp_compute(sal_x, sal_y, pp_interaction_list, tree_panels, xs, ys, zs, areas, sshs, e_xs, e_ys, e_zs, e_areas, &
                     e_sshs, own_points)
 
+    call MPI_Barrier(MPI_COMM_WORLD, ierr)
     IF (process_rank == 0) THEN
         CALL CPU_TIME(t2)
         print *, 'pp computation time: ',(t2 - t1)
@@ -297,11 +314,16 @@ program main
     allocate(sal_xs(point_count), source=0.0_8)
     allocate(sal_ys(point_count), source=0.0_8)
 
+    ! print *, 'here 1', sal_y(1)
+
     call Gather_point_data(sal_x, sal_xs, own_points, point_count, points_per_proc, starting_point_proc, &
                             MPI_COMM_WORLD, total_ranks, process_rank)
     call Gather_point_data(sal_y, sal_ys, own_points, point_count, points_per_proc, starting_point_proc, &
                             MPI_COMM_WORLD, total_ranks, process_rank)
 
+    ! print *, 'here 2', sal_ys(1)
+
+    call MPI_Barrier(MPI_COMM_WORLD, ierr)
     IF (process_rank == 0) THEN
         CALL CPU_TIME(t2)
         print *, 'Communication time: ',(t2 - t1)
@@ -309,9 +331,17 @@ program main
 
         open(file='./run-output/2313486_sal_x.csv', status='replace', unit = 15)
         open(file='./run-output/2313486_sal_y.csv', status='replace', unit = 16)
+        open(file='./run-output/2313486_x.csv', status='replace', unit = 17)
+        open(file='./run-output/2313486_y.csv', status='replace', unit = 18)
+        open(file='./run-output/2313486_z.csv', status='replace', unit = 19)
+        open(file='./run-output/2313486_areas.csv', status='replace', unit = 20)
         DO i = 1, point_count
             write(15, *) sal_xs(i)
             write(16, *) sal_ys(i)
+            write(17, *) xs_t(i)
+            write(18, *) ys_t(i)
+            write(19, *) zs_t(i)
+            write(20, *) areas_t(i)
         END DO
         close(15)
         close(16)

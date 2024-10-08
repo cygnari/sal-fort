@@ -315,15 +315,15 @@ MODULE FAST_SUM_MODULE
                     call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
                                         area, ssh, interp_degree)
                 ELSE IF (type == 2) THEN
-                    ! call cp_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-                    !                     area, ssh, interp_degree)
-                    call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
+                    call cp_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
                                         area, ssh, interp_degree)
+                    ! call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
+                    !                     area, ssh, interp_degree)
                 ELSE IF (type == 3) THEN
-                    ! call cc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
-                    !                     area, ssh, interp_degree)
-                    call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
+                    call cc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
                                         area, ssh, interp_degree)
+                    ! call pc_interact(sal_longrad, sal_latgrad, cube_panels(i_t), cube_panels(i_s), xs, ys, zs, &
+                    !                     area, ssh, interp_degree)
                 END IF
             END IF
         END DO

@@ -69,7 +69,7 @@ MODULE Tree_Module
 
         pi = 4.D0*DATAN(1.D0)
 
-        allocate(tree_panels_temp(point_count))
+        allocate(tree_panels_temp(max(point_count,6)))
         allocate(curr_loc(6))
 
         ! initialize the six top level cube panels
@@ -257,9 +257,9 @@ MODULE Tree_Module
         DO i = 1, own_points
             level = 1
             j = 1
-            DO ! do loop over tree panels
+            jloop: DO ! do loop over tree panels
                 IF (j == -1) THEN
-                    exit
+                    exit jloop
                 ELSE IF (tree_panels(j)%contains_point(xs(i), ys(i), zs(i))) THEN
                     ! point i is contained in panel j
                     points_panels(level, i) = j
@@ -268,7 +268,7 @@ MODULE Tree_Module
                 ELSE
                     j = j + 1
                 END IF
-            END DO
+            END DO jloop
         END DO
     END SUBROUTINE
 
@@ -439,7 +439,7 @@ MODULE Tree_Module
                         well_separated = .true.
                     END IF
                     ! way 2, check if target i is in panel i_s
-                    ! well_separated = tree_panels(i_s)%contains_point(x1t, x2t, x3t)
+                    ! well_separated = .not. tree_panels(i_s)%contains_point(x1t, x2t, x3t)
                     IF (well_separated) THEN
                         ! well separated, do cluster interaction
                         interaction_count = interaction_count + 1
@@ -447,6 +447,7 @@ MODULE Tree_Module
                         interaction_lists_temp(interaction_count)%index_source = i_s
                         interaction_lists_temp(interaction_count)%interact_type = 1
                         pc_count = pc_count + 1
+                        ! print *, 1, i, j
                     ELSE IF (tree_panels(i_s)%is_leaf) THEN
                         ! source panel is a leaf, cannot refine further
                         interaction_count = interaction_count + 1
@@ -454,6 +455,7 @@ MODULE Tree_Module
                         interaction_lists_temp(interaction_count)%index_source = i_s
                         interaction_lists_temp(interaction_count)%interact_type = 0
                         pp_count = pp_count + 1
+                        ! print *, 0, i, j
                     ELSE 
                         ! source panel is not a leaf and is not well separated, refine 
                         source_index(tree_traverse_count+1) = tree_panels(i_s)%child_panel_1
@@ -466,6 +468,8 @@ MODULE Tree_Module
                 curr_loc = curr_loc + 1
             END DO
         END DO
+
+        ! print *, pc_count, pp_count
 
         allocate(pc_interaction_list(pc_count))
         allocate(pp_interaction_list(pp_count))
